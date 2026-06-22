@@ -1,5 +1,5 @@
-$pathA = "\\?\hid#vid_046d&pid_c548&mi_02&col01#8&25563e2a&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
-$pathB = "\\?\hid#vid_046d&pid_c548&mi_02&col01#7&2b242eea&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
+$pathA = "\\?\hid#vid_046d&pid_c548&mi_02&col01#8&2d23797b&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
+$pathB = "\\?\hid#vid_046d&pid_c548&mi_02&col01#8&2d23797b&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
 
 Write-Host "=== Receiver A ===" -ForegroundColor Cyan
 foreach ($di in 1..8) {
