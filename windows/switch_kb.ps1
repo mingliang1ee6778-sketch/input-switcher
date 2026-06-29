@@ -1,4 +1,4 @@
-﻿param([int]$TargetHost = 0)
+param([int]$TargetHost = 0)
 
 $src = @"
 using System;
@@ -43,26 +43,45 @@ public class KirosKeyboard {
     }
     public static string FindPipeName() {
         try {
-            string pipeDir = @"\\.\pipe\";
-            foreach(var f in Directory.GetFiles(pipeDir)) {
+            foreach(var f in Directory.GetFiles(@"\\.\pipe\")) {
                 string name = Path.GetFileName(f);
                 if(name.StartsWith("logitech_kiros_agent-")) return name;
             }
         } catch {}
         return null;
     }
+    // Extract all device IDs that have a /change_host/{id}/host route
+    static System.Collections.Generic.List<string> GetChangeHostIds(NamedPipeClientStream pipe, ref int mid) {
+        var ids = new System.Collections.Generic.List<string>();
+        string mId = (mid++).ToString();
+        byte[] frame = Frame(mId, "GET", "/routes", null);
+        pipe.Write(frame,0,frame.Length); pipe.Flush();
+        string resp = ReadMsgWithId(pipe, mId) ?? "";
+        int cur = 0;
+        while ((cur = resp.IndexOf("/change_host/", cur)) >= 0) {
+            int s = cur + "/change_host/".Length;
+            int e = resp.IndexOf("/host", s);
+            if (e > s) {
+                string id = resp.Substring(s, e - s);
+                if (!ids.Contains(id)) ids.Add(id);
+            }
+            cur = e > 0 ? e : cur + 1;
+        }
+        return ids;
+    }
     public static string SwitchKeyboardHost(string pipeName, int host) {
         var pipe=new NamedPipeClientStream(".",pipeName,PipeDirection.InOut,PipeOptions.None);
         try { pipe.Connect(3000); } catch { return "NO_PIPE"; }
         ReadMsg(pipe);
-        string[] candidates = {"dev00000001","dev00000002","dev00000003","dev00000004",
-                               "dev00000005","dev00000006","dev00000007","dev00000008",
-                               "dev0000000a","dev0000000b","dev0000000c","dev0000000d"};
-        string keyboardId = null;
         int mid = 10;
-        foreach (var id in candidates) {
+        // Step 1: get device IDs that actually have change_host routes
+        var changeHostIds = GetChangeHostIds(pipe, ref mid);
+        if (changeHostIds.Count == 0) { pipe.Close(); return "NOT_CONNECTED"; }
+        // Step 2: find K855 by checking easy_switch for canSetPlatform + multiple BLEPRO hosts
+        string keyboardId = null;
+        foreach (var id in changeHostIds) {
             string mId = (mid++).ToString();
-            byte[] frame=Frame(mId,"GET","/devices/"+id+"/easy_switch",null);
+            byte[] frame = Frame(mId, "GET", "/devices/"+id+"/easy_switch", null);
             pipe.Write(frame,0,frame.Length); pipe.Flush();
             string r = ReadMsgWithId(pipe, mId) ?? "";
             if (r.Contains("SUCCESS") && r.Contains("\"canSetPlatform\": true") &&
@@ -72,14 +91,15 @@ public class KirosKeyboard {
             }
         }
         if (keyboardId == null) { pipe.Close(); return "NOT_FOUND"; }
+        // Step 3: send switch command
         string swId = (mid++).ToString();
-        byte[] swFrame=Frame(swId,"SET","/change_host/"+keyboardId+"/host","{\"host\":"+host+"}");
+        byte[] swFrame = Frame(swId, "SET", "/change_host/"+keyboardId+"/host", "{\"host\":"+host+"}");
         pipe.Write(swFrame,0,swFrame.Length); pipe.Flush();
-        string resp = ReadMsgWithId(pipe, swId) ?? "";
+        string resp2 = ReadMsgWithId(pipe, swId) ?? "";
         pipe.Close();
-        if (resp.Contains("SUCCESS")) return "OK:"+keyboardId;
-        if (resp.Contains("NO_SUCH_PATH")) return "NOT_CONNECTED";
-        return "FAIL";
+        if (resp2.Contains("SUCCESS")) return "OK:"+keyboardId;
+        if (resp2.Contains("NO_SUCH_PATH")) return "NOT_CONNECTED";
+        return "FAIL:"+resp2.Substring(0, Math.Min(80, resp2.Length));
     }
 }
 "@
@@ -94,8 +114,8 @@ if (-not $pipeName) {
 
 $r = [KirosKeyboard]::SwitchKeyboardHost($pipeName, $TargetHost)
 switch -Wildcard ($r) {
-    "OK:*"         { Write-Host "K855: switched to host $TargetHost" }
+    "OK:*"          { Write-Host "K855: switched to host $TargetHost ($r)" }
     "NOT_CONNECTED" { Write-Host "K855: not connected to this PC (already switched?)"; exit 0 }
-    "NOT_FOUND"    { Write-Host "K855: keyboard not found on this PC"; exit 0 }
-    default        { Write-Host "K855: FAILED ($r)"; exit 1 }
+    "NOT_FOUND"     { Write-Host "K855: keyboard not found on this PC"; exit 0 }
+    default         { Write-Host "K855: FAILED ($r)"; exit 1 }
 }
